@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt-BR" class="bg-[#020617]">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    
+    <!-- Título do seu Produto -->
+    <title>TrackerPro | Intensidade em Tempo Real</title>
+    <meta name="description" content="Acompanhamento visual de intensidade para treinos indoor.">
+
+    <!-- Cores de interface para mobile (Chrome/Safari) -->
+    <meta name="theme-color" content="#020617">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <!-- Fontes Premium: Inter para leitura e JetBrains Mono para cronômetros -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
+
+    <style>
+      /* Estilo crítico para evitar o flash branco no carregamento */
+      html, body {
+        background-color: #020617;
+        margin: 0;
+        padding: 0;
+        -webkit-tap-highlight-color: transparent;
+      }
+      
+      /* Otimização de renderização de fontes */
+      body {
+        font-family: 'Inter', sans-serif;
+        text-rendering: optimizeLegibility;
+        -webkit-font-smoothing: antialiased;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- O root recebe o app React -->
+    <div id="root"></div>
+
+    <!-- Script principal do Vite -->
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
