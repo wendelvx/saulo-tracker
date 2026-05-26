@@ -78,8 +78,7 @@ export default function WorkoutChart({
     return { y: 0, color: 'rgb(0, 82, 204)', glow: 'rgba(0, 82, 204, 0.8)' };
   }, [chartData, currentTime, duration, isDragging]);
 
-  // CÁLCULO DINÂMICO DE VELOCIDADE (RPM -> Segundos de animação)
-  // Quanto maior o RPM, menor o tempo da animação (gira/pulsa mais rápido)
+  // CÁLCULO DINÂMICO DE VELOCIDADE (RPM -> Segundos de animação da bolinha)
   const pulseDuration = useMemo(() => {
      const safeRpm = Math.max(currentRpm, 1); 
      return (60 / safeRpm).toFixed(2);
@@ -93,10 +92,6 @@ export default function WorkoutChart({
           0% { stroke-width: 2px; filter: brightness(1); }
           50% { stroke-width: 4px; filter: brightness(1.3); }
           100% { stroke-width: 2px; filter: brightness(1); }
-        }
-        @keyframes spinGear {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
         }
         .telemetry-sync line {
           transition: stroke 0.2s ease, stroke-opacity 0.2s ease;
@@ -209,32 +204,17 @@ export default function WorkoutChart({
              paddingLeft: '5px', 
              paddingRight: '5px',
              touchAction: 'none',
-             cursor: isDragging ? 'grabbing' : 'grab' // Força o cursor via style também
+             cursor: isDragging ? 'grabbing' : 'grab' 
           }}
         />
       )}
 
       {/* MICRO-INTERAÇÕES: HUD INFERIOR DO GRÁFICO */}
-      <div className="absolute bottom-1 left-2 right-12 flex justify-between items-end z-30 pointer-events-none">
+      <div className="absolute bottom-1 left-4 right-12 flex justify-between items-end z-30 pointer-events-none">
         
-        {/* Lado Esquerdo: Marca e RPM Dinâmico */}
-        <div className="flex flex-col gap-1.5 ml-2 mb-1">
-          <span className="text-[9px] font-black text-white/20 uppercase tracking-[0.3em]">Tracker OS v2</span>
-          
-          <div className="flex items-center gap-1.5 bg-black/60 backdrop-blur-sm px-2 py-1 rounded-md border border-white/10 shadow-lg">
-            <span 
-              className="inline-block text-[10px]"
-              style={{ 
-                animation: `spinGear ${pulseDuration}s linear infinite`,
-                filter: isDragging ? 'grayscale(100%) opacity(0.5)' : 'none'
-              }}
-            >
-              ⚙️
-            </span>
-            <span className="text-[9px] font-mono font-bold tracking-widest" style={{ color: isDragging ? '#666' : '#fff' }}>
-              {currentRpm} RPM
-            </span>
-          </div>
+        {/* Lado Esquerdo: Marca OS */}
+        <div className="flex flex-col gap-1.5 mb-1">
+          <span className="text-[9px] font-black text-white/20 uppercase tracking-[0.3em] drop-shadow-md">Tracker OS v2</span>
         </div>
 
         {/* Lado Direito: Status da Sincronização */}
