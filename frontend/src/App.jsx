@@ -34,10 +34,19 @@ export default function App() {
   const [isCountingDown, setIsCountingDown] = useState(false);
   const [countdownValue, setCountdownValue] = useState(5);
   const [obsMode, setObsMode] = useState(false);
+
+  const [isDragging, setIsDragging] = useState(false);
+  const wasRunningRef = useRef(false);
   
   const timerRef = useRef(null);
   const startTimeRef = useRef(null);
   const lastAccumulatedRef = useRef(0);
+
+  // NOVO: Ref para guardar os estados sem precisar recriar o event listener
+  const stateRef = useRef({ isRunning, isCountingDown, activeWorkout });
+  useEffect(() => {
+    stateRef.current = { isRunning, isCountingDown, activeWorkout };
+  }, [isRunning, isCountingDown, activeWorkout]);
 
   useEffect(() => { fetchTreinos(); }, []);
 
@@ -81,14 +90,36 @@ export default function App() {
     setShowConfig(true); 
   };
 
+  // Ajustado para ler os valores do stateRef e não causar loops
   const handlePlayPause = () => {
-    if (!activeWorkout) return;
-    if (!isRunning && currentTime === 0 && !isCountingDown) {
+    const { activeWorkout: aw, isRunning: r, isCountingDown: c } = stateRef.current;
+    if (!aw) return;
+    
+    if (!r && lastAccumulatedRef.current === 0 && !c) {
       setIsCountingDown(true);
       setCountdownValue(5);
     } else {
-      setIsRunning(!isRunning);
+      setIsRunning(!r);
     }
+  };
+
+  const handleSeekStart = () => {
+    setIsDragging(true);
+    wasRunningRef.current = stateRef.current.isRunning;
+    if (stateRef.current.isRunning) setIsRunning(false);
+    if (stateRef.current.isCountingDown) setIsCountingDown(false);
+  };
+
+  const handleSeek = (newTime) => {
+    if (!stateRef.current.activeWorkout) return;
+    const safeTime = Math.max(0, Math.min(newTime, stateRef.current.activeWorkout.duracao_total));
+    setCurrentTime(safeTime);
+    lastAccumulatedRef.current = safeTime;
+  };
+
+  const handleSeekEnd = () => {
+    setIsDragging(false);
+    if (wasRunningRef.current) setIsRunning(true);
   };
 
   useEffect(() => {
@@ -151,21 +182,29 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
   }, []);
 
+  // CORREÇÃO MESTRA DE UX: Array vazio [] garante performance e atalhos contínuos
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.target.tagName === 'INPUT') return; 
+      // Ignora apenas se estiver num campo de formulário, mas PERMITE se for o input invisível do gráfico
+      if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return; 
 
       if (e.code === 'Space') {
-        e.preventDefault(); 
+        e.preventDefault(); // Evita scroll da página ou cliques duplos fantasma
         handlePlayPause();
       }
-      if (e.code === 'KeyF') toggleObsMode();
-      if (e.code === 'KeyR') handleReset();
+      if (e.code === 'KeyF' || e.code === 'Keyf') {
+        e.preventDefault(); 
+        toggleObsMode();
+      }
+      if (e.code === 'KeyR' || e.code === 'Keyr') {
+        e.preventDefault();
+        handleReset();
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isRunning, activeWorkout, isCountingDown, currentTime]);
+  }, []); // <-- Array vazio! O segredo está aqui.
 
   const stats = useMemo(() => {
     if (!activeWorkout) return null;
@@ -205,14 +244,14 @@ export default function App() {
             
             {!obsMode && (
               <div className="flex justify-between items-center mb-5 shrink-0 animate-in fade-in slide-in-from-top-4">
-                <div className="flex items-center gap-3">
-                  <div className="bg-orange-500 p-1.5 rounded-md shadow-[0_0_15px_rgba(249,115,22,0.4)]">
-                    <Activity size={22} className="text-black" />
-                  </div>
-                  <h1 className="text-2xl font-black italic tracking-tighter uppercase">
-                    <span className="bg-gradient-to-r from-orange-400 to-orange-600 bg-clip-text text-transparent">Saulo</span>
-                    <span className="text-white">Fitness</span>
-                  </h1>
+                
+                {/* LOGO SUBSTITUÍDA NA TELA INICIAL */}
+                <div className="flex items-center">
+                  <img 
+                    src="/saulo.png" 
+                    alt="Saulo Logo" 
+                    className="h-10 md:h-12 w-auto object-contain drop-shadow-[0_0_15px_rgba(249,115,22,0.3)]" 
+                  />
                 </div>
                 
                 <div className="flex gap-3 bg-[#111] p-1.5 rounded-2xl border border-[#222]">
@@ -243,9 +282,30 @@ export default function App() {
             {activeWorkout ? (
               <div className={`flex flex-col flex-1 bg-[#0a0a0a] border-[4px] border-[#1a1a1a] overflow-hidden shadow-2xl transition-all ${obsMode ? 'rounded-2xl' : 'rounded-[2rem]'}`}>
                 
-                {/* ÁREA SUPERIOR (HUD) */}
                 <div className="shrink-0 flex flex-col font-bold border-b-[4px] border-[#1a1a1a]">
                   
+                  {/* TOPO COM LOGO E TEMPO TOTAL NO MODO TREINO */}
+                  <div className="flex justify-between items-center px-4 md:px-6 py-3 bg-[#050505] border-b-2 border-[#151515]">
+                    
+                    {/* LOGO SUBSTITUÍDA NO CABEÇALHO DO TREINO */}
+                    <div className="flex items-center">
+                      <img 
+                        src="/saulo.png" 
+                        alt="Saulo Logo" 
+                        className="h-8 md:h-10 w-auto object-contain drop-shadow-[0_0_15px_rgba(249,115,22,0.3)]" 
+                      />
+                    </div>
+
+                    <div className="flex flex-col text-right">
+                      <span className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">Progresso Total</span>
+                      <span className="text-white font-mono font-black italic text-lg md:text-xl leading-none">
+                        <span className="text-orange-500">{formatTime(currentTime)}</span> 
+                        <span className="text-gray-700 mx-1">/</span> 
+                        {formatTime(activeWorkout.duracao_total)}
+                      </span>
+                    </div>
+                  </div>
+
                   {/* CABEÇALHO */}
                   <div className="grid grid-cols-[1fr_2fr_1.5fr_1fr] text-center text-[10px] md:text-xs uppercase tracking-[0.2em] text-gray-500 bg-black py-2 border-b-2 border-[#151515]">
                     <div>Tempo</div><div>Método</div><div>Carga</div><div>RPM</div>
@@ -254,7 +314,6 @@ export default function App() {
                   {/* BLOCO ATUAL */}
                   <div className="grid grid-cols-[1fr_2fr_1.5fr_1fr] text-center items-stretch bg-[#050505] transition-all">
                     
-                    {/* TEMPO */}
                     <div 
                       className="py-4 px-2 flex items-center justify-center border-r-[4px] border-[#1a1a1a] tabular-nums font-mono text-white italic"
                       style={obsMode ? { fontSize: 'clamp(2rem, 5vw, 6rem)' } : { fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}
@@ -262,7 +321,6 @@ export default function App() {
                       {formatTime((stats?.current?.tempo_final || 0) - currentTime)}
                     </div>
                     
-                    {/* MÉTODO (Ajustado para break-words e não cortar) */}
                     <div 
                       className="py-4 px-2 sm:px-4 flex items-center justify-center border-r-[4px] border-[#1a1a1a] bg-[#ea580c] uppercase text-white italic leading-tight"
                       style={obsMode ? { fontSize: 'clamp(1.5rem, 4vw, 5.5rem)' } : { fontSize: 'clamp(1.2rem, 2.5vw, 2.2rem)' }}
@@ -272,7 +330,6 @@ export default function App() {
                       </span>
                     </div>
                     
-                    {/* CARGA */}
                     <div 
                       className={`py-4 px-2 sm:px-4 flex flex-col items-center justify-center border-r-[4px] border-[#1a1a1a] uppercase italic leading-tight ${stats?.current?.intensidade ? getCargaDetails(stats?.current?.intensidade).color : 'text-gray-600'}`}
                       style={obsMode ? { fontSize: 'clamp(1.5rem, 3.5vw, 5rem)' } : { fontSize: 'clamp(1.1rem, 2vw, 1.8rem)' }}
@@ -285,12 +342,31 @@ export default function App() {
                        </span>
                     </div>
 
-                    {/* RPM */}
+                    {/* RPM COM ENGRENAGEM DINÂMICA */}
                     <div 
-                      className="py-4 px-2 flex items-center justify-center bg-black text-white font-mono italic leading-none"
+                      className="py-4 px-2 flex items-center justify-center bg-black text-white font-mono italic leading-none relative overflow-hidden"
                       style={obsMode ? { fontSize: 'clamp(2rem, 5vw, 6rem)' } : { fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}
                     >
-                      {stats?.current?.rpm || 80}
+                      <style>{`
+                        @keyframes spinGearApp {
+                          from { transform: rotate(0deg); }
+                          to { transform: rotate(360deg); }
+                        }
+                      `}</style>
+                      
+                      <div className="flex items-center gap-2 md:gap-3 z-10">
+                        <span 
+                          className="inline-block opacity-80"
+                          style={{ 
+                            fontSize: '0.7em',
+                            animation: isRunning ? `spinGearApp ${(60 / Math.max(stats?.current?.rpm || 80, 1)).toFixed(2)}s linear infinite` : 'none',
+                            filter: !isRunning ? 'grayscale(100%) opacity(0.5)' : 'drop-shadow(0 0 5px rgba(255,255,255,0.3))'
+                          }}
+                        >
+                          ⚙️
+                        </span>
+                        <span>{stats?.current?.rpm || 80}</span>
+                      </div>
                     </div>
                   </div>
 
@@ -337,6 +413,10 @@ export default function App() {
                     currentTime={currentTime} 
                     duration={activeWorkout.duracao_total} 
                     currentRpm={stats?.current?.rpm || 80}
+                    onSeekStart={handleSeekStart}
+                    onSeek={handleSeek}
+                    onSeekEnd={handleSeekEnd}
+                    isDragging={isDragging}
                   />
                 </div>
               </div>
