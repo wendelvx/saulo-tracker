@@ -28,7 +28,7 @@ db.exec(`
     tempo_inicial INTEGER NOT NULL,
     tempo_final INTEGER NOT NULL,
     intensidade INTEGER NOT NULL,
-    rpm INTEGER NOT NULL DEFAULT 80, -- NOVO: Coluna RPM adicionada com valor padrão de 80
+    rpm INTEGER NOT NULL DEFAULT 80,
     exercicio TEXT,
     FOREIGN KEY(treino_id) REFERENCES treinos(id) ON DELETE CASCADE
   );
@@ -36,15 +36,15 @@ db.exec(`
 
 /**
  * 2. PREPARAÇÃO DE STATEMENTS (Performance & Reuso)
+ * Compilados em tempo de inicialização para latência zero nas requisições.
  */
 const selectAllTreinos = db.prepare('SELECT * FROM treinos ORDER BY criado_em DESC');
+const selectTreinoById = db.prepare('SELECT * FROM treinos WHERE id = ?'); // OTIZIMADO: Statement em cache
 const selectBlocksByTreino = db.prepare('SELECT * FROM blocos WHERE treino_id = ? ORDER BY tempo_inicial ASC');
 const deleteTreino = db.prepare('DELETE FROM treinos WHERE id = ?');
 const deleteBlocksByTreino = db.prepare('DELETE FROM blocos WHERE treino_id = ?');
 const insertTreino = db.prepare('INSERT INTO treinos (nome, duracao_total) VALUES (?, ?)');
 const updateTreinoBase = db.prepare('UPDATE treinos SET nome = ?, duracao_total = ? WHERE id = ?');
-
-// NOVO: Adicionado 'rpm' no statement de insert
 const insertBloco = db.prepare('INSERT INTO blocos (treino_id, tempo_inicial, tempo_final, intensidade, exercicio, rpm) VALUES (?, ?, ?, ?, ?, ?)');
 
 /**
@@ -65,10 +65,11 @@ app.get('/api/treinos', (req, res) => {
   }
 });
 
-// BUSCAR UM TREINO ESPECÍFICO (Útil para carregar no editor)
+// BUSCAR UM TREINO ESPECÍFICO
 app.get('/api/treinos/:id', (req, res) => {
   try {
-    const treino = db.prepare('SELECT * FROM treinos WHERE id = ?').get(req.params.id);
+    // Utilizando o statement pré-compilado
+    const treino = selectTreinoById.get(req.params.id);
     if (!treino) return res.status(404).json({ error: "Treino não encontrado" });
     
     treino.blocos = selectBlocksByTreino.all(treino.id);
@@ -90,7 +91,6 @@ app.post('/api/treinos', (req, res) => {
     const info = insertTreino.run(nome, duracao);
     const id = info.lastInsertRowid;
     for (const b of lista) {
-      // NOVO: Passando o b.rpm (com fallback de segurança para 80 caso o frontend não mande)
       insertBloco.run(id, b.tempo_inicial, b.tempo_final, b.intensidade, b.exercicio || 'ATIVIDADE', b.rpm || 80);
     }
     return id;
@@ -104,7 +104,7 @@ app.post('/api/treinos', (req, res) => {
   }
 });
 
-// ATUALIZAR TREINO EXISTENTE (Lógica Sênior: Replace Sync)
+// ATUALIZAR TREINO EXISTENTE (Replace Sync)
 app.put('/api/treinos/:id', (req, res) => {
   const { id } = req.params;
   const { nome, duracao_total, blocos } = req.body;
@@ -113,7 +113,6 @@ app.put('/api/treinos/:id', (req, res) => {
     return res.status(400).json({ error: "Dados incompletos para atualização." });
   }
 
-  // Transação garante que se a inserção de um bloco falhar, o treino antigo não é perdido
   const updateTx = db.transaction((tId, tNome, tDuracao, tBlocos) => {
     // 1. Atualiza dados básicos
     const result = updateTreinoBase.run(tNome, tDuracao, tId);
@@ -124,7 +123,6 @@ app.put('/api/treinos/:id', (req, res) => {
 
     // 3. Insere a nova versão da timeline
     for (const b of tBlocos) {
-      // NOVO: Passando o b.rpm também na atualização
       insertBloco.run(tId, b.tempo_inicial, b.tempo_final, b.intensidade, b.exercicio || 'ATIVIDADE', b.rpm || 80);
     }
   });

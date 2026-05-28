@@ -38,6 +38,9 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [isVisualEditMode, setIsVisualEditMode] = useState(false); 
   
+  // NOVO: Estado para espelhar o tempo no cabeçalho em tempo real durante o arraste
+  const [previewDuration, setPreviewDuration] = useState(null);
+  
   const wasRunningRef = useRef(false);
 
   const timerRef = useRef(null);
@@ -73,6 +76,7 @@ export default function App() {
         await axios.put(`${API}/treinos/${workoutData.id}`, workoutData);
         setWorkoutToEdit(null);
         setIsVisualEditMode(false);
+        setPreviewDuration(null); // Limpa o preview ao salvar
       } else {
         await axios.post(`${API}/treinos`, workoutData);
       }
@@ -148,7 +152,6 @@ export default function App() {
     };
 
     setActiveWorkout(updatedWorkout);
-    
     setWorkoutToEdit(updatedWorkout);
     if (!showConfig) setShowConfig(true);
   };
@@ -192,6 +195,7 @@ export default function App() {
     setIsRunning(false);
     setIsCountingDown(false);
     setCurrentTime(0);
+    setPreviewDuration(null); // Limpa o preview no reset
     lastAccumulatedRef.current = 0;
     startTimeRef.current = null;
   };
@@ -248,7 +252,6 @@ export default function App() {
   }, [activeWorkout, currentTime]);
 
   return (
-    // ESTRUTURA GLOBAL: Viewport rígido de 100vh com overflow oculto para impedir o scroll da página inteira
     <div className={`bg-[#050505] text-white font-sans selection:bg-orange-600/30 overflow-hidden antialiased flex flex-col w-screen h-screen`}>
 
       {isCountingDown && (
@@ -266,13 +269,10 @@ export default function App() {
         </div>
       )}
 
-      {/* Container Principal: Usa flex-1 e min-h-0 para nunca crescer além do h-screen do PAI */}
       <main className={`mx-auto flex flex-col flex-1 w-full min-h-0 ${obsMode ? 'p-2' : 'p-3 md:p-6 max-w-[1700px]'}`}>
 
-        {/* GRID LAYOUT: Usa h-full e min-h-0 */}
         <div className={`flex-1 min-h-0 grid gap-6 transition-all duration-700 ease-in-out ${showConfig && !obsMode ? 'lg:grid-cols-[1fr_420px]' : 'grid-cols-1'}`}>
 
-          {/* COLUNA ESQUERDA (PLAYER / GRÁFICO) */}
           <div className={`flex flex-col h-full min-h-0 w-full mx-auto ${obsMode ? 'max-w-none' : 'max-w-[1250px]'}`}>
 
             {!obsMode && (
@@ -317,7 +317,6 @@ export default function App() {
 
                 <div className="shrink-0 flex flex-col font-bold border-b-[4px] border-[#1a1a1a]">
 
-                  {/* TOPO COM LOGO E SWITCH DE MODO */}
                   <div className="flex justify-between items-center px-4 md:px-6 py-3 bg-[#050505] border-b-2 border-[#151515]">
                     
                     <div className="flex items-center">
@@ -328,12 +327,14 @@ export default function App() {
                       />
                     </div>
 
-                    {/* SWITCH TELEMETRIA <-> EDIÇÃO VISUAL */}
                     <div className="flex items-center gap-4">
                       {!obsMode && (
                         <div className="flex bg-[#111] p-1 rounded-lg border border-[#222]">
                           <button 
-                            onClick={() => setIsVisualEditMode(false)}
+                            onClick={() => {
+                              setIsVisualEditMode(false);
+                              setPreviewDuration(null); // Limpa ao sair do modo de edição
+                            }}
                             className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${!isVisualEditMode ? 'bg-orange-600 text-white shadow-md' : 'text-gray-500 hover:text-white'}`}
                           >
                             Telemetria
@@ -359,19 +360,20 @@ export default function App() {
                             {formatTime(currentTime)}
                           </span>
                           <span className="text-gray-700 mx-1">/</span>
-                          {formatTime(activeWorkout.duracao_total)}
+                          {/* MOSTRA O TEMPO DE PREVIEW EM VERMELHO ENQUANTO ARRASTA, OU O TEMPO OFICIAL */}
+                          <span className={previewDuration !== null ? "text-red-500 transition-colors" : ""}>
+                            {formatTime(previewDuration !== null ? previewDuration : activeWorkout.duracao_total)}
+                          </span>
                         </span>
                       </div>
                     </div>
 
                   </div>
 
-                  {/* CABEÇALHO DA TABELA */}
                   <div className="grid grid-cols-[1fr_2fr_1.5fr_1fr] text-center text-[10px] md:text-xs uppercase tracking-[0.2em] text-gray-500 bg-black py-2 border-b-2 border-[#151515]">
                     <div>Tempo</div><div>Método</div><div>Carga</div><div>RPM</div>
                   </div>
 
-                  {/* BLOCO ATUAL */}
                   <div className="grid grid-cols-[1fr_2fr_1.5fr_1fr] text-center items-stretch bg-[#050505] transition-all">
 
                     <div
@@ -442,7 +444,6 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* PRÓXIMO BLOCO */}
                   <div className="grid grid-cols-[1fr_2fr_1.5fr_1fr] text-center items-stretch bg-[#111] opacity-80">
                     <div
                       className="py-2 sm:py-3 px-2 flex items-center justify-center border-r-[4px] border-[#1a1a1a] text-gray-400 tabular-nums font-mono"
@@ -478,7 +479,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* GRÁFICO (flex-1 para empurrar o layout e preencher a área restante) */}
                 <div className="relative flex-1 min-h-0 bg-[#181818]">
                   <WorkoutChart
                     data={activeWorkout.blocos}
@@ -491,6 +491,7 @@ export default function App() {
                     isDragging={isDragging}
                     isEditMode={isVisualEditMode}
                     onBlocksUpdate={handleChartBlocksUpdate}
+                    onDurationPreview={setPreviewDuration} // NOVO: Passa a função de preview para o gráfico
                   />
                 </div>
               </div>
@@ -502,11 +503,9 @@ export default function App() {
             )}
           </div>
 
-          {/* COLUNA DIREITA (CONFIG / FORM) */}
           {showConfig && !obsMode && (
             <aside className="flex flex-col gap-5 h-full min-h-0 overflow-hidden animate-in slide-in-from-right duration-700">
               
-              {/* No Modo de Edição Visual, o formulário ocupa 100% do espaço vertical da coluna */}
               <div className={`transition-all duration-500 ease-in-out min-h-0 flex flex-col ${isVisualEditMode ? 'h-full flex-1' : 'flex-1'}`}>
                 <WorkoutForm
                   onSave={saveWorkout}
@@ -514,11 +513,11 @@ export default function App() {
                   onCancel={() => {
                      setWorkoutToEdit(null);
                      setIsVisualEditMode(false);
+                     setPreviewDuration(null);
                   }}
                 />
               </div>
 
-              {/* MODO FOCO: Oculta a Biblioteca de Treinos quando o Editor Visual está ativo */}
               {!isVisualEditMode && (
                 <div className="bg-[#0a0a0a] p-6 rounded-[2rem] border border-[#1a1a1a] h-[40%] shrink-0 flex flex-col shadow-2xl animate-in fade-in slide-in-from-bottom-4">
                   <h3 className="font-bold text-gray-500 mb-4 uppercase tracking-[0.2em] text-[10px] flex items-center gap-2 shrink-0">
@@ -532,6 +531,7 @@ export default function App() {
                           setActiveWorkout(t);
                           handleReset();
                           setIsVisualEditMode(false);
+                          setPreviewDuration(null);
                         }}
                         className={`group relative p-5 rounded-2xl border-2 transition-all cursor-pointer ${activeWorkout?.id === t.id ? 'border-orange-600 bg-orange-600/5' : 'border-[#1a1a1a] bg-[#0d0d0d] hover:border-[#333]'}`}
                       >
