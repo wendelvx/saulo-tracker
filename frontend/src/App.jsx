@@ -36,13 +36,14 @@ export default function App() {
   const [obsMode, setObsMode] = useState(false);
 
   const [isDragging, setIsDragging] = useState(false);
+  const [isVisualEditMode, setIsVisualEditMode] = useState(false); 
+  
   const wasRunningRef = useRef(false);
 
   const timerRef = useRef(null);
   const startTimeRef = useRef(null);
   const lastAccumulatedRef = useRef(0);
 
-  // NOVO: Ref para guardar os estados sem precisar recriar o event listener
   const stateRef = useRef({ isRunning, isCountingDown, activeWorkout });
   useEffect(() => {
     stateRef.current = { isRunning, isCountingDown, activeWorkout };
@@ -54,7 +55,16 @@ export default function App() {
     try {
       const res = await axios.get(`${API}/treinos`);
       setTreinos(res.data);
-    } catch (err) { console.error("Erro ao carregar treinos", err); }
+      
+      setActiveWorkout(prevActive => {
+        if (!prevActive) return null;
+        const updatedWorkout = res.data.find(t => t.id === prevActive.id);
+        return updatedWorkout || prevActive; 
+      });
+      
+    } catch (err) { 
+      console.error("Erro ao carregar treinos", err); 
+    }
   };
 
   const saveWorkout = async (workoutData) => {
@@ -62,6 +72,7 @@ export default function App() {
       if (workoutData.id) {
         await axios.put(`${API}/treinos/${workoutData.id}`, workoutData);
         setWorkoutToEdit(null);
+        setIsVisualEditMode(false);
       } else {
         await axios.post(`${API}/treinos`, workoutData);
       }
@@ -90,8 +101,9 @@ export default function App() {
     setShowConfig(true);
   };
 
-  // Ajustado para ler os valores do stateRef e não causar loops
   const handlePlayPause = () => {
+    if (isVisualEditMode) return; 
+    
     const { activeWorkout: aw, isRunning: r, isCountingDown: c } = stateRef.current;
     if (!aw) return;
 
@@ -104,6 +116,7 @@ export default function App() {
   };
 
   const handleSeekStart = () => {
+    if (isVisualEditMode) return;
     setIsDragging(true);
     wasRunningRef.current = stateRef.current.isRunning;
     if (stateRef.current.isRunning) setIsRunning(false);
@@ -111,15 +124,33 @@ export default function App() {
   };
 
   const handleSeek = (newTime) => {
-    if (!stateRef.current.activeWorkout) return;
+    if (isVisualEditMode || !stateRef.current.activeWorkout) return;
     const safeTime = Math.max(0, Math.min(newTime, stateRef.current.activeWorkout.duracao_total));
     setCurrentTime(safeTime);
     lastAccumulatedRef.current = safeTime;
   };
 
   const handleSeekEnd = () => {
+    if (isVisualEditMode) return;
     setIsDragging(false);
     if (wasRunningRef.current) setIsRunning(true);
+  };
+
+  const handleChartBlocksUpdate = (newBlocos) => {
+    if (!activeWorkout) return;
+    
+    const newTotalDuration = newBlocos.length > 0 ? newBlocos[newBlocos.length - 1].tempo_final : 0;
+    
+    const updatedWorkout = {
+      ...activeWorkout,
+      duracao_total: newTotalDuration,
+      blocos: newBlocos
+    };
+
+    setActiveWorkout(updatedWorkout);
+    
+    setWorkoutToEdit(updatedWorkout);
+    if (!showConfig) setShowConfig(true);
   };
 
   useEffect(() => {
@@ -136,7 +167,7 @@ export default function App() {
   }, [isCountingDown, countdownValue]);
 
   useEffect(() => {
-    if (isRunning && activeWorkout) {
+    if (isRunning && activeWorkout && !isVisualEditMode) {
       startTimeRef.current = Date.now();
       timerRef.current = setInterval(() => {
         const now = Date.now();
@@ -155,7 +186,7 @@ export default function App() {
       clearInterval(timerRef.current);
     }
     return () => clearInterval(timerRef.current);
-  }, [isRunning, activeWorkout]);
+  }, [isRunning, activeWorkout, isVisualEditMode]);
 
   const handleReset = () => {
     setIsRunning(false);
@@ -182,14 +213,12 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
   }, []);
 
-  // CORREÇÃO MESTRA DE UX: Array vazio [] garante performance e atalhos contínuos
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Ignora apenas se estiver num campo de formulário, mas PERMITE se for o input invisível do gráfico
       if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
 
       if (e.code === 'Space') {
-        e.preventDefault(); // Evita scroll da página ou cliques duplos fantasma
+        e.preventDefault();
         handlePlayPause();
       }
       if (e.code === 'KeyF' || e.code === 'Keyf') {
@@ -204,7 +233,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []); // <-- Array vazio! O segredo está aqui.
+  }, []); 
 
   const stats = useMemo(() => {
     if (!activeWorkout) return null;
@@ -219,7 +248,8 @@ export default function App() {
   }, [activeWorkout, currentTime]);
 
   return (
-    <div className={`bg-[#050505] text-white font-sans selection:bg-orange-600/30 overflow-x-hidden antialiased flex flex-col ${obsMode ? 'h-screen w-screen overflow-hidden' : 'min-h-screen'}`}>
+    // ESTRUTURA GLOBAL: Viewport rígido de 100vh com overflow oculto para impedir o scroll da página inteira
+    <div className={`bg-[#050505] text-white font-sans selection:bg-orange-600/30 overflow-hidden antialiased flex flex-col w-screen h-screen`}>
 
       {isCountingDown && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center">
@@ -236,16 +266,18 @@ export default function App() {
         </div>
       )}
 
-      <main className={`mx-auto flex flex-col gap-4 flex-1 ${obsMode ? 'p-2 h-full w-full max-w-none' : 'p-3 md:p-6 max-w-[1700px] w-full min-h-screen lg:h-screen'}`}>
+      {/* Container Principal: Usa flex-1 e min-h-0 para nunca crescer além do h-screen do PAI */}
+      <main className={`mx-auto flex flex-col flex-1 w-full min-h-0 ${obsMode ? 'p-2' : 'p-3 md:p-6 max-w-[1700px]'}`}>
 
-        <div className={`flex-1 grid gap-6 transition-all duration-700 ease-in-out h-full ${showConfig && !obsMode ? 'lg:grid-cols-[1fr_420px]' : 'grid-cols-1'}`}>
+        {/* GRID LAYOUT: Usa h-full e min-h-0 */}
+        <div className={`flex-1 min-h-0 grid gap-6 transition-all duration-700 ease-in-out ${showConfig && !obsMode ? 'lg:grid-cols-[1fr_420px]' : 'grid-cols-1'}`}>
 
-          <div className={`flex flex-col h-full w-full mx-auto ${obsMode ? 'max-w-none' : 'max-w-[1250px]'}`}>
+          {/* COLUNA ESQUERDA (PLAYER / GRÁFICO) */}
+          <div className={`flex flex-col h-full min-h-0 w-full mx-auto ${obsMode ? 'max-w-none' : 'max-w-[1250px]'}`}>
 
             {!obsMode && (
               <div className="flex justify-between items-center mb-5 shrink-0 animate-in fade-in slide-in-from-top-4">
 
-                {/* LOGO SUBSTITUÍDA NA TELA INICIAL */}
                 <div className="flex items-center">
                   <img
                     src="/saulo.png"
@@ -262,9 +294,10 @@ export default function App() {
                   <div className="w-[1px] bg-[#333] mx-1 my-2"></div>
                   <button
                     onClick={handlePlayPause}
-                    className={`p-3 rounded-xl flex items-center justify-center transition-all active:scale-95 ${isRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-green-600 hover:bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]'}`}
+                    disabled={isVisualEditMode}
+                    className={`p-3 rounded-xl flex items-center justify-center transition-all active:scale-95 ${isVisualEditMode ? 'bg-[#1a1a1a] text-[#444] cursor-not-allowed' : isRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-green-600 hover:bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]'}`}
                   >
-                    {isRunning ? <Pause size={20} fill="white" /> : <Play size={20} fill="white" className="ml-1" />}
+                    {isRunning ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
                   </button>
                   <button onClick={handleReset} className="p-3 bg-[#1a1a1a] hover:bg-[#252525] rounded-xl text-gray-400 hover:text-white transition-all">
                     <RotateCcw size={20} />
@@ -280,14 +313,13 @@ export default function App() {
             )}
 
             {activeWorkout ? (
-              <div className={`flex flex-col flex-1 bg-[#0a0a0a] border-[4px] border-[#1a1a1a] overflow-hidden shadow-2xl transition-all ${obsMode ? 'rounded-2xl' : 'rounded-[2rem]'}`}>
+              <div className={`flex flex-col flex-1 min-h-0 bg-[#0a0a0a] border-[4px] border-[#1a1a1a] overflow-hidden shadow-2xl transition-all ${obsMode ? 'rounded-2xl' : 'rounded-[2rem]'}`}>
 
                 <div className="shrink-0 flex flex-col font-bold border-b-[4px] border-[#1a1a1a]">
 
-                  {/* TOPO COM LOGO E TEMPO TOTAL NO MODO TREINO */}
+                  {/* TOPO COM LOGO E SWITCH DE MODO */}
                   <div className="flex justify-between items-center px-4 md:px-6 py-3 bg-[#050505] border-b-2 border-[#151515]">
-
-                    {/* LOGO SUBSTITUÍDA NO CABEÇALHO DO TREINO */}
+                    
                     <div className="flex items-center">
                       <img
                         src="/saulo.png"
@@ -296,17 +328,45 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="flex flex-col text-right">
-                      <span className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">Progresso Total</span>
-                      <span className="text-white font-mono font-black italic text-lg md:text-xl leading-none">
-                        <span className="text-orange-500">{formatTime(currentTime)}</span>
-                        <span className="text-gray-700 mx-1">/</span>
-                        {formatTime(activeWorkout.duracao_total)}
-                      </span>
+                    {/* SWITCH TELEMETRIA <-> EDIÇÃO VISUAL */}
+                    <div className="flex items-center gap-4">
+                      {!obsMode && (
+                        <div className="flex bg-[#111] p-1 rounded-lg border border-[#222]">
+                          <button 
+                            onClick={() => setIsVisualEditMode(false)}
+                            className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${!isVisualEditMode ? 'bg-orange-600 text-white shadow-md' : 'text-gray-500 hover:text-white'}`}
+                          >
+                            Telemetria
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setIsRunning(false);
+                              setWorkoutToEdit(activeWorkout);
+                              setShowConfig(true);
+                              setIsVisualEditMode(true);
+                            }}
+                            className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-md transition-all flex items-center gap-1 ${isVisualEditMode ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:text-white'}`}
+                          >
+                            <Edit2 size={10}/> Editor Visual
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="flex flex-col text-right">
+                        <span className="text-[9px] md:text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">Progresso Total</span>
+                        <span className="text-white font-mono font-black italic text-lg md:text-xl leading-none">
+                          <span className={isVisualEditMode ? "text-blue-500" : "text-orange-500"}>
+                            {formatTime(currentTime)}
+                          </span>
+                          <span className="text-gray-700 mx-1">/</span>
+                          {formatTime(activeWorkout.duracao_total)}
+                        </span>
+                      </div>
                     </div>
+
                   </div>
 
-                  {/* CABEÇALHO */}
+                  {/* CABEÇALHO DA TABELA */}
                   <div className="grid grid-cols-[1fr_2fr_1.5fr_1fr] text-center text-[10px] md:text-xs uppercase tracking-[0.2em] text-gray-500 bg-black py-2 border-b-2 border-[#151515]">
                     <div>Tempo</div><div>Método</div><div>Carga</div><div>RPM</div>
                   </div>
@@ -334,16 +394,14 @@ export default function App() {
                       className={`py-4 px-2 sm:px-4 flex flex-col items-center justify-center border-r-[4px] border-[#1a1a1a] uppercase italic leading-tight ${stats?.current?.intensidade ? getCargaDetails(stats?.current?.intensidade).color : 'text-gray-600'}`}
                       style={obsMode ? { fontSize: 'clamp(1.5rem, 3.5vw, 5rem)' } : { fontSize: 'clamp(1.1rem, 2vw, 1.8rem)' }}
                     >
-                      <span className="drop-shadow-md whitespace-normal leading-tight text-center">
-                        <span className="font-black">{stats?.current?.intensidade || '-'}</span>
-                        {stats?.current?.intensidade && (
-                          <span className="block text-[0.4em] tracking-widest opacity-80 mt-1">{getCargaDetails(stats?.current?.intensidade).label}</span>
-                        )}
-                      </span>
+                       <span className="drop-shadow-md whitespace-normal leading-tight text-center">
+                         <span className="font-black">{stats?.current?.intensidade || '-'}</span>
+                         {stats?.current?.intensidade && (
+                           <span className="block text-[0.4em] tracking-widest opacity-80 mt-1">{getCargaDetails(stats?.current?.intensidade).label}</span>
+                         )}
+                       </span>
                     </div>
 
-                    {/* RPM COM ENGRENAGEM DINÂMICA */}
-                    {/* RPM COM ENGRENAGEM DINÂMICA */}
                     <div 
                       className="py-4 px-2 flex items-center justify-center bg-black text-white font-mono italic leading-none relative overflow-hidden"
                       style={obsMode ? { fontSize: 'clamp(2rem, 5vw, 6rem)' } : { fontSize: 'clamp(1.5rem, 3vw, 2.5rem)' }}
@@ -356,12 +414,11 @@ export default function App() {
                       `}</style>
                       
                       <div className="flex items-center gap-3 z-10">
-                        {/* RODA DE TELEMETRIA SVG */}
                         <div 
-                          className="text-orange-500" // Cor da roda
+                          className={isVisualEditMode ? "text-blue-500" : "text-orange-500"}
                           style={{ 
                             animation: isRunning ? `spinGearApp ${(60 / Math.max(stats?.current?.rpm || 80, 1)).toFixed(2)}s linear infinite` : 'none',
-                            filter: !isRunning ? 'grayscale(100%) opacity(0.3)' : 'drop-shadow(0 0 10px rgba(249,115,22,0.6))'
+                            filter: !isRunning ? 'grayscale(100%) opacity(0.3)' : `drop-shadow(0 0 10px ${isVisualEditMode ? 'rgba(59,130,246,0.6)' : 'rgba(249,115,22,0.6)'})`
                           }}
                         >
                           <svg 
@@ -374,22 +431,12 @@ export default function App() {
                             strokeLinecap="round" 
                             strokeLinejoin="round"
                           >
-                            {/* Aro externo translúcido */}
                             <circle cx="12" cy="12" r="10" strokeOpacity="0.2"/>
-                            {/* Eixo central */}
                             <circle cx="12" cy="12" r="3"/>
-                            {/* Raios da roda */}
-                            <path d="M12 2v3"/>
-                            <path d="M12 19v3"/>
-                            <path d="M2 12h3"/>
-                            <path d="M19 12h3"/>
-                            <path d="M4.9 4.9l2.1 2.1"/>
-                            <path d="M17 17l2.1 2.1"/>
-                            <path d="M4.9 19.1l2.1-2.1"/>
-                            <path d="M17 7l2.1-2.1"/>
+                            <path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/>
+                            <path d="M4.9 4.9l2.1 2.1"/><path d="M17 17l2.1 2.1"/><path d="M4.9 19.1l2.1-2.1"/><path d="M17 7l2.1-2.1"/>
                           </svg>
                         </div>
-                        
                         <span className="ml-1">{stats?.current?.rpm || 80}</span>
                       </div>
                     </div>
@@ -431,8 +478,8 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* GRÁFICO */}
-                <div className="relative flex-1 bg-[#181818] min-h-[250px]">
+                {/* GRÁFICO (flex-1 para empurrar o layout e preencher a área restante) */}
+                <div className="relative flex-1 min-h-0 bg-[#181818]">
                   <WorkoutChart
                     data={activeWorkout.blocos}
                     currentTime={currentTime}
@@ -442,64 +489,76 @@ export default function App() {
                     onSeek={handleSeek}
                     onSeekEnd={handleSeekEnd}
                     isDragging={isDragging}
+                    isEditMode={isVisualEditMode}
+                    onBlocksUpdate={handleChartBlocksUpdate}
                   />
                 </div>
               </div>
             ) : (
-              <div className="flex-1 flex flex-col items-center justify-center border-[4px] border-dashed border-[#1a1a1a] rounded-[3rem] text-gray-600 bg-[#080808]">
+              <div className="flex-1 min-h-0 flex flex-col items-center justify-center border-[4px] border-dashed border-[#1a1a1a] rounded-[3rem] text-gray-600 bg-[#080808]">
                 <div className="bg-[#111] p-8 rounded-full mb-6 text-gray-800"><Play size={60} fill="currentColor" /></div>
                 <h2 className="text-2xl font-bold uppercase tracking-widest text-gray-500">Selecione um Treino</h2>
               </div>
             )}
           </div>
 
+          {/* COLUNA DIREITA (CONFIG / FORM) */}
           {showConfig && !obsMode && (
-            <aside className="flex flex-col gap-5 h-full overflow-hidden animate-in slide-in-from-right duration-700">
-              <div className="flex-1 min-h-0">
+            <aside className="flex flex-col gap-5 h-full min-h-0 overflow-hidden animate-in slide-in-from-right duration-700">
+              
+              {/* No Modo de Edição Visual, o formulário ocupa 100% do espaço vertical da coluna */}
+              <div className={`transition-all duration-500 ease-in-out min-h-0 flex flex-col ${isVisualEditMode ? 'h-full flex-1' : 'flex-1'}`}>
                 <WorkoutForm
                   onSave={saveWorkout}
                   workoutToEdit={workoutToEdit}
-                  onCancel={() => setWorkoutToEdit(null)}
+                  onCancel={() => {
+                     setWorkoutToEdit(null);
+                     setIsVisualEditMode(false);
+                  }}
                 />
               </div>
 
-              <div className="bg-[#0a0a0a] p-6 rounded-[2rem] border border-[#1a1a1a] h-[40%] flex flex-col shadow-2xl">
-                <h3 className="font-bold text-gray-500 mb-4 uppercase tracking-[0.2em] text-[10px] flex items-center gap-2">
-                  <Activity size={14} className="text-orange-500" /> Biblioteca
-                </h3>
-                <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent">
-                  {treinos.map(t => (
-                    <div
-                      key={t.id}
-                      onClick={() => {
-                        setActiveWorkout(t);
-                        handleReset();
-                      }}
-                      className={`group relative p-5 rounded-2xl border-2 transition-all cursor-pointer ${activeWorkout?.id === t.id ? 'border-orange-600 bg-orange-600/5' : 'border-[#1a1a1a] bg-[#0d0d0d] hover:border-[#333]'}`}
-                    >
-                      <div className="font-black uppercase italic text-lg tracking-tight pr-12">{t.nome}</div>
-                      <div className="text-[10px] font-bold text-gray-500 mt-2 uppercase opacity-60">
-                        {formatTime(t.duracao_total)} • {t.blocos?.length} Fases
-                      </div>
+              {/* MODO FOCO: Oculta a Biblioteca de Treinos quando o Editor Visual está ativo */}
+              {!isVisualEditMode && (
+                <div className="bg-[#0a0a0a] p-6 rounded-[2rem] border border-[#1a1a1a] h-[40%] shrink-0 flex flex-col shadow-2xl animate-in fade-in slide-in-from-bottom-4">
+                  <h3 className="font-bold text-gray-500 mb-4 uppercase tracking-[0.2em] text-[10px] flex items-center gap-2 shrink-0">
+                    <Activity size={14} className="text-orange-500" /> Biblioteca
+                  </h3>
+                  <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent">
+                    {treinos.map(t => (
+                      <div
+                        key={t.id}
+                        onClick={() => {
+                          setActiveWorkout(t);
+                          handleReset();
+                          setIsVisualEditMode(false);
+                        }}
+                        className={`group relative p-5 rounded-2xl border-2 transition-all cursor-pointer ${activeWorkout?.id === t.id ? 'border-orange-600 bg-orange-600/5' : 'border-[#1a1a1a] bg-[#0d0d0d] hover:border-[#333]'}`}
+                      >
+                        <div className="font-black uppercase italic text-lg tracking-tight pr-12">{t.nome}</div>
+                        <div className="text-[10px] font-bold text-gray-500 mt-2 uppercase opacity-60">
+                          {formatTime(t.duracao_total)} • {t.blocos?.length} Fases
+                        </div>
 
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={(e) => handleEditClick(t, e)}
-                          className="p-2 bg-blue-600/20 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg transition-all"
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                        <button
-                          onClick={(e) => deleteWorkout(t.id, e)}
-                          className="p-2 bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white rounded-lg transition-all"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => handleEditClick(t, e)}
+                            className="p-2 bg-blue-600/20 text-blue-500 hover:bg-blue-600 hover:text-white rounded-lg transition-all"
+                          >
+                            <Edit2 size={14} />
+                          </button>
+                          <button
+                            onClick={(e) => deleteWorkout(t.id, e)}
+                            className="p-2 bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white rounded-lg transition-all"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </aside>
           )}
         </div>

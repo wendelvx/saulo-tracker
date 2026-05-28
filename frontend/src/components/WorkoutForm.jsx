@@ -39,7 +39,10 @@ export default function WorkoutForm({ onSave, workoutToEdit, onCancel }) {
     let tempoAcumulado = 0;
     return blocos.map(bloco => {
       const inicio = tempoAcumulado;
-      tempoAcumulado += (Number(bloco.duracao) || 0);
+      // UX Fix: Garante um mínimo de 5 segundos se o usuário apagar o input temporariamente,
+      // impedindo que o gráfico "quebre" visualmente no momento da digitação.
+      const duracaoValida = Math.max(5, Number(bloco.duracao) || 0);
+      tempoAcumulado += duracaoValida;
       return { ...bloco, tempo_inicial: inicio, tempo_final: tempoAcumulado };
     });
   }, [blocos]);
@@ -86,7 +89,6 @@ export default function WorkoutForm({ onSave, workoutToEdit, onCancel }) {
     }, 2000);
   };
 
-  // Lógica aprimorada para retornar texto e estilos dinâmicos
   const getCargaDetails = (level) => {
     if (level <= 3) return { label: 'BAIXA', text: 'text-blue-500', bg: 'bg-blue-500/10 border-blue-500/20' };
     if (level <= 5) return { label: 'MÉDIA', text: 'text-green-500', bg: 'bg-green-500/10 border-green-500/20' };
@@ -96,7 +98,8 @@ export default function WorkoutForm({ onSave, workoutToEdit, onCancel }) {
   };
 
   return (
-    <div className="bg-[#111] border border-[#222] p-4 md:p-5 rounded-2xl flex flex-col gap-4 shadow-2xl h-full w-full relative overflow-hidden">
+    // ESTRUTURA FLEX: O container abraça todo o espaço vertical disponível
+    <div className="bg-[#111] border border-[#222] rounded-2xl flex flex-col shadow-2xl h-full w-full overflow-hidden relative">
       
       {showSuccess && (
         <div className="absolute inset-0 bg-green-600/10 backdrop-blur-sm z-50 flex items-center justify-center animate-in fade-in">
@@ -151,7 +154,8 @@ export default function WorkoutForm({ onSave, workoutToEdit, onCancel }) {
         </div>
       )}
 
-      <header className="flex flex-col gap-2 shrink-0">
+      {/* HEADER FIXO: shrink-0 impede que seja esmagado pela rolagem */}
+      <header className="flex flex-col gap-2 shrink-0 p-4 md:p-5 pb-2 border-b border-[#1a1a1a]">
         <div className="flex justify-between items-center">
             <div className="flex items-center gap-2 text-gray-500 uppercase text-[10px] font-bold tracking-widest ml-1">
                 <LayoutList size={14} className={workoutToEdit ? "text-blue-500" : "text-green-500"} /> 
@@ -174,16 +178,17 @@ export default function WorkoutForm({ onSave, workoutToEdit, onCancel }) {
             </div>
         </div>
         <input 
-          className={`w-full bg-black border rounded-xl p-3 text-white placeholder:text-gray-600 outline-none transition-all font-bold text-base md:text-lg uppercase ${workoutToEdit ? 'border-blue-500/50 focus:border-blue-500' : 'border-[#333] focus:border-green-500'}`}
+          className={`w-full bg-black border rounded-xl p-3 text-white placeholder:text-gray-600 outline-none transition-all font-bold text-base md:text-lg uppercase mt-1 ${workoutToEdit ? 'border-blue-500/50 focus:border-blue-500' : 'border-[#333] focus:border-green-500'}`}
           placeholder="NOME DO TREINO"
           value={nome}
           onChange={(e) => setNome(e.target.value.toUpperCase())}
         />
       </header>
       
-      <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent">
+      {/* ZONA DE SCROLL: flex-1 preenche o meio, min-h-0 destrava o limite vertical */}
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-3 p-4 md:p-5 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent">
         {timeline.map((b, i) => {
-          const carga = getCargaDetails(b.intensidade); // Calcula o visual da carga para o bloco atual
+          const carga = getCargaDetails(b.intensidade); 
 
           return (
           <div key={i} className="group bg-[#1a1a1a] border border-[#2a2a2a] p-3 md:p-4 rounded-xl transition-all hover:border-gray-500 flex flex-col gap-3">
@@ -237,7 +242,6 @@ export default function WorkoutForm({ onSave, workoutToEdit, onCancel }) {
               </div>
             </div>
 
-            {/* BARRA DE CARGA COM BADGE DINÂMICO */}
             <div className="flex flex-col gap-1 mt-1">
               <div className="flex justify-between items-end mb-2">
                 <label className="text-[10px] font-bold text-gray-500 uppercase ml-1">Carga</label>
@@ -261,7 +265,8 @@ export default function WorkoutForm({ onSave, workoutToEdit, onCancel }) {
         )})}
       </div>
 
-      <footer className="flex flex-col gap-3 pt-3 border-t border-[#222] shrink-0">
+      {/* FOOTER FIXO: shrink-0 mantém os botões no final sem sobrepor a lista */}
+      <footer className="flex flex-col gap-3 shrink-0 p-4 md:p-5 border-t border-[#1a1a1a] bg-[#0a0a0a]">
         <div className="flex justify-between items-end px-2">
           <div className="flex flex-col">
             <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Duração Total</span>
