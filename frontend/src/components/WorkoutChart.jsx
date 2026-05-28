@@ -1,293 +1,361 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, Save, Trash2, Clock, LayoutList, Dumbbell, Timer, CheckCircle2, X, Activity, HelpCircle } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, ReferenceLine, ReferenceDot, Area, ComposedChart } from 'recharts';
 
-const formatTime = (totalSeconds) => {
-  const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-  const s = (totalSeconds % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
+// --- FUNÇÕES UTILITÁRIAS DE COR ---
+const hexToRgb = (hex) => {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return result ? [parseInt(result[1], 16), parseInt(result[2], 16), parseInt(result[3], 16)] : [0, 0, 0];
 };
 
-export default function WorkoutForm({ onSave, workoutToEdit, onCancel }) {
-  const [nome, setNome] = useState('');
-  const [showSuccess, setShowSuccess] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
-  const [blocos, setBlocos] = useState([
-    { duracao: 60, intensidade: 2, rpm: 80, exercicio: 'AQUECIMENTO' }
-  ]);
+const interpolateColor = (color1, color2, factor) => {
+  const c1 = hexToRgb(color1);
+  const c2 = hexToRgb(color2);
+  const r = Math.round(c1[0] + factor * (c2[0] - c1[0]));
+  const g = Math.round(c1[1] + factor * (c2[1] - c1[1]));
+  const b = Math.round(c1[2] + factor * (c2[2] - c1[2]));
+  return `${r}, ${g}, ${b}`;
+};
 
+const getSmoothColor = (y) => {
+  const val = Math.max(0, Math.min(y, 10));
+  if (val <= 2.5) return interpolateColor('#0052cc', '#22c55e', val / 2.5);
+  if (val <= 5.0) return interpolateColor('#22c55e', '#eab308', (val - 2.5) / 2.5);
+  if (val <= 7.5) return interpolateColor('#eab308', '#f97316', (val - 5.0) / 2.5);
+  return interpolateColor('#f97316', '#ef4444', (val - 7.5) / 2.5);
+};
+// --------------------------------------------
+
+export default function WorkoutChart({ 
+  data, 
+  currentTime, 
+  duration, 
+  currentRpm = 80,
+  onSeekStart,
+  onSeek,
+  onSeekEnd,
+  isDragging,
+  isEditMode, 
+  onBlocksUpdate 
+}) {
+  
+  const overlayRef = useRef(null);
+  
+  // dragBoundary pode ser o índice de uma divisória interna (0 até data.length - 2)
+  // ou 'END' se for a última aresta (que altera o tempo total do treino)
+  const [dragBoundary, setDragBoundary] = useState(null); 
+  const [localBlocos, setLocalBlocos] = useState([]);     
+  
+  // Memória elástica da duração durante o arraste
+  const [localDuration, setLocalDuration] = useState(duration);
+
+  // Mantém os blocos e a duração sincronizados quando não estamos arrastando
   useEffect(() => {
-    if (workoutToEdit) {
-      setNome(workoutToEdit.nome);
-      const blocosCarregados = workoutToEdit.blocos.map(b => ({
-        duracao: b.tempo_final - b.tempo_inicial,
-        intensidade: b.intensidade,
-        rpm: b.rpm || 80,
-        exercicio: b.exercicio
-      }));
-      setBlocos(blocosCarregados);
-    } else {
-      resetForm();
+    if (dragBoundary === null) {
+      setLocalBlocos(data || []);
+      setLocalDuration(duration);
     }
-  }, [workoutToEdit]);
+  }, [data, duration, dragBoundary]);
 
-  const resetForm = () => {
-    setNome('');
-    setBlocos([{ duracao: 60, intensidade: 2, rpm: 80, exercicio: 'AQUECIMENTO' }]);
-  };
+  const localBlocosRef = useRef(localBlocos);
+  const localDurationRef = useRef(localDuration);
+  useEffect(() => { 
+    localBlocosRef.current = localBlocos; 
+    localDurationRef.current = localDuration;
+  }, [localBlocos, localDuration]);
 
-  const timeline = useMemo(() => {
-    let tempoAcumulado = 0;
-    return blocos.map(bloco => {
-      const inicio = tempoAcumulado;
-      // UX Fix: Garante um mínimo de 5 segundos se o usuário apagar o input temporariamente,
-      // impedindo que o gráfico "quebre" visualmente no momento da digitação.
-      const duracaoValida = Math.max(5, Number(bloco.duracao) || 0);
-      tempoAcumulado += duracaoValida;
-      return { ...bloco, tempo_inicial: inicio, tempo_final: tempoAcumulado };
-    });
-  }, [blocos]);
-
-  const totalDuration = timeline.length > 0 ? timeline[timeline.length - 1].tempo_final : 0;
-
-  const addBloco = () => {
-    setBlocos([...blocos, { duracao: 30, intensidade: 5, rpm: 80, exercicio: '' }]);
-  };
-
-  const removeBloco = (index) => {
-    if (blocos.length <= 1) return;
-    setBlocos(blocos.filter((_, i) => i !== index));
-  };
-
-  const updateBloco = (index, field, value) => {
-    const newBlocos = [...blocos];
-    newBlocos[index][field] = value;
-    setBlocos(newBlocos);
-  };
-
-  const handleSave = () => {
-    if (!nome) return alert("Dê um nome ao seu treino!");
+  // MOTOR FÍSICO DO RIPPLE EDIT (EMPURRAR BLOCOS E TEMPO TOTAL)
+  useEffect(() => {
+    if (dragBoundary === null) return;
     
-    const blocosParaSalvar = timeline.map(b => ({
-        tempo_inicial: b.tempo_inicial,
-        tempo_final: b.tempo_final,
-        intensidade: b.intensidade,
-        rpm: Number(b.rpm) || 80,
-        exercicio: b.exercicio.trim() === '' ? 'ATIVIDADE' : b.exercicio.trim().toUpperCase()
-    }));
+    const handlePointerMove = (e) => {
+      if (!overlayRef.current) return;
+      const rect = overlayRef.current.getBoundingClientRect();
+      
+      let x = e.clientX - rect.left;
+      let percentage = Math.max(0, x / rect.width);
+      
+      // Ao arrastar a aresta final (END), ela pode passar de 100% (crescer a timeline visualmente se quiser)
+      // Mas para manter simples, ela altera o tempo local baseado numa projeção da duration inicial.
+      // A matemática ideal aqui: calcula os "segundos apontados pelo mouse" com base na escala atual do grid
+      let mouseSeconds = Math.round(percentage * localDurationRef.current);
 
-    onSave({ 
-      id: workoutToEdit?.id, 
-      nome, 
-      duracao_total: totalDuration, 
-      blocos: blocosParaSalvar 
-    });
+      setLocalBlocos(prev => {
+        const newBlocos = prev.map(b => ({ ...b })); 
+
+        if (dragBoundary === 'END') {
+           // ARRASTE DA ARESTA FINAL
+           // Impede que o treino inteiro fique com menos de X segundos
+           const minTotalTime = newBlocos.length > 1 ? newBlocos[newBlocos.length - 2].tempo_final + 5 : 5;
+           const newTotal = Math.max(minTotalTime, mouseSeconds);
+           
+           // Apenas estica ou encolhe o último bloco
+           const lastIdx = newBlocos.length - 1;
+           newBlocos[lastIdx].tempo_final = newTotal;
+           newBlocos[lastIdx].duracao = newTotal - newBlocos[lastIdx].tempo_inicial;
+           
+           setLocalDuration(newTotal); // O gráfico expande dinamicamente
+           
+        } else {
+           // ARRASTE DE ARESTA INTERMEDIÁRIA (RIPPLE EDIT)
+           const idx = dragBoundary; // Bloco à esquerda da aresta
+           
+           // Limite mínimo: o bloco arrastado precisa ter pelo menos 5s
+           const prevTime = idx > 0 ? newBlocos[idx - 1].tempo_final : 0;
+           let newArestaTime = Math.max(prevTime + 5, mouseSeconds);
+
+           // Descobre o "delta" de tempo (quanto a aresta moveu em segundos)
+           const delta = newArestaTime - newBlocos[idx].tempo_final;
+           
+           if (delta === 0) return prev; // Não moveu
+
+           // 1. Atualiza o bloco alvo
+           newBlocos[idx].tempo_final = newArestaTime;
+           newBlocos[idx].duracao = newArestaTime - newBlocos[idx].tempo_inicial;
+
+           // 2. Desloca (Ripple) todos os blocos subsequentes pelo mesmo Delta
+           for (let i = idx + 1; i < newBlocos.length; i++) {
+             newBlocos[i].tempo_inicial += delta;
+             newBlocos[i].tempo_final += delta;
+           }
+
+           // O novo tempo total do treino é o tempo final do último bloco
+           setLocalDuration(newBlocos[newBlocos.length - 1].tempo_final);
+        }
+        
+        return newBlocos;
+      });
+    };
     
-    setShowSuccess(true);
-    setTimeout(() => {
-        setShowSuccess(false);
-        if (!workoutToEdit) resetForm();
-    }, 2000);
-  };
+    const handlePointerUp = () => {
+      if (onBlocksUpdate) {
+        onBlocksUpdate(localBlocosRef.current);
+      }
+      setDragBoundary(null);
+    };
+    
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [dragBoundary, onBlocksUpdate]);
+  // --------------------------------------------
 
-  const getCargaDetails = (level) => {
-    if (level <= 3) return { label: 'BAIXA', text: 'text-blue-500', bg: 'bg-blue-500/10 border-blue-500/20' };
-    if (level <= 5) return { label: 'MÉDIA', text: 'text-green-500', bg: 'bg-green-500/10 border-green-500/20' };
-    if (level <= 7) return { label: 'MÉDIA+', text: 'text-orange-500', bg: 'bg-orange-500/10 border-orange-500/20' };
-    if (level <= 9) return { label: 'ALTA', text: 'text-red-500', bg: 'bg-red-500/10 border-red-500/20' };
-    return { label: 'MÁXIMA', text: 'text-red-600', bg: 'bg-red-600/10 border-red-600/20' };
-  };
+  // GERAÇÃO DA MALHA VISUAL (DEGRAUS)
+  const chartData = useMemo(() => {
+    const sourceData = (isEditMode && dragBoundary !== null) ? localBlocos : (data || []);
+    if (!sourceData || sourceData.length === 0) return [];
+    
+    const points = [];
+    sourceData.forEach((bloco) => {
+      // Início do degrau
+      points.push({ tempo: bloco.tempo_inicial, intensidade: Math.max(0, bloco.intensidade) });
+      // Fim do degrau
+      points.push({ tempo: bloco.tempo_final, intensidade: Math.max(0, bloco.intensidade) });
+    });
+    return points;
+  }, [data, localBlocos, isEditMode, dragBoundary]);
+
+  // CÁLCULO DE POSIÇÃO DA TELEMETRIA
+  const telemetry = useMemo(() => {
+    if (chartData.length < 2 || currentTime <= 0) return { y: 0, color: 'rgb(0, 82, 204)', glow: 'rgba(0, 82, 204, 0.8)' };
+    if (currentTime >= localDuration) {
+      const lastColor = getSmoothColor(chartData[chartData.length - 1].intensidade);
+      return { y: chartData[chartData.length - 1].intensidade, color: `rgb(${lastColor})`, glow: `rgba(${lastColor}, 0.8)` };
+    }
+
+    // Procura o degrau exato em que o currentTime está
+    for (let i = 0; i < chartData.length; i += 2) {
+      const inicio = chartData[i];
+      const fim = chartData[i + 1];
+      if (currentTime >= inicio.tempo && currentTime <= fim.tempo) {
+        const rgbColor = getSmoothColor(inicio.intensidade);
+        return { y: inicio.intensidade, color: `rgb(${rgbColor})`, glow: `rgba(${rgbColor}, ${isDragging ? '1' : '0.8'})` };
+      }
+    }
+    return { y: 0, color: 'rgb(0, 82, 204)', glow: 'rgba(0, 82, 204, 0.8)' };
+  }, [chartData, currentTime, localDuration, isDragging]);
+
+  const pulseDuration = useMemo(() => {
+     const safeRpm = Math.max(currentRpm, 1); 
+     return (60 / safeRpm).toFixed(2);
+  }, [currentRpm]);
 
   return (
-    // ESTRUTURA FLEX: O container abraça todo o espaço vertical disponível
-    <div className="bg-[#111] border border-[#222] rounded-2xl flex flex-col shadow-2xl h-full w-full overflow-hidden relative">
+    <div className={`w-full h-full relative bg-[#0f0f0f] overflow-hidden border-t border-[#1a1a1a] ${isEditMode ? '' : isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}>
       
-      {showSuccess && (
-        <div className="absolute inset-0 bg-green-600/10 backdrop-blur-sm z-50 flex items-center justify-center animate-in fade-in">
-          <div className="bg-black border border-green-500 p-4 rounded-2xl flex items-center gap-3 shadow-2xl">
-            <CheckCircle2 className="text-green-500" />
-            <span className="font-bold text-white uppercase text-sm">
-                {workoutToEdit ? 'Alterações Salvas!' : 'Treino Salvo com Sucesso!'}
-            </span>
-          </div>
-        </div>
-      )}
+      <style>{`
+        @keyframes heartbeat {
+          0% { stroke-width: 2px; filter: brightness(1); }
+          50% { stroke-width: 4px; filter: brightness(1.3); }
+          100% { stroke-width: 2px; filter: brightness(1); }
+        }
+        .telemetry-sync line {
+          transition: stroke 0.2s ease, stroke-opacity 0.2s ease;
+          will-change: transform, stroke;
+          transform: translateZ(0);
+        }
+        .telemetry-sync circle {
+          transition: fill 0.2s ease, filter 0.2s ease, r 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+          will-change: transform, fill, filter, r;
+          transform: translateZ(0);
+          ${!isDragging && !isEditMode ? `animation: heartbeat ${pulseDuration}s infinite ease-in-out;` : ''}
+        }
+        .chart-overlay {
+          background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.2) 50%), 
+                      linear-gradient(90deg, rgba(255, 0, 0, 0.01), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.01));
+          background-size: 100% 4px, 3px 100%;
+          pointer-events: none;
+        }
+        .tech-grid {
+          background-image: 
+            linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+          background-size: 40px 40px;
+          pointer-events: none;
+        }
+        .editor-mode-bg {
+          background: repeating-linear-gradient( 45deg, rgba(59, 130, 246, 0.02), rgba(59, 130, 246, 0.02) 10px, transparent 10px, transparent 20px);
+        }
+      `}</style>
 
-      {showHelp && (
-        <div className="absolute inset-0 bg-black/80 backdrop-blur-md z-40 flex flex-col p-6 animate-in fade-in overflow-y-auto custom-scrollbar">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-orange-500 font-black italic tracking-wider uppercase text-lg flex items-center gap-2">
-              <HelpCircle size={20} /> Como usar
-            </h3>
-            <button onClick={() => setShowHelp(false)} className="text-gray-400 hover:text-white transition-colors">
-              <X size={20} />
-            </button>
-          </div>
-          
-          <div className="space-y-4 text-sm text-gray-300">
-            <div>
-              <p className="font-bold text-white uppercase text-xs tracking-widest border-b border-[#333] pb-1 mb-2">Estrutura</p>
-              <p>O treino é construído em <b>fases contínuas</b>. Defina os <b>Segundos</b> de cada bloco e o sistema calculará automaticamente o tempo total (ex: do minuto 2:00 ao 3:00).</p>
-            </div>
-            
-            <div>
-              <p className="font-bold text-white uppercase text-xs tracking-widest border-b border-[#333] pb-1 mb-2 mt-4 flex items-center gap-1"><Activity size={12}/> RPM</p>
-              <p>Rotações por minuto. Reflete a cadência dos pedais. O gráfico usará esse número para definir a <b>velocidade da pulsação visual</b> na tela do aluno.</p>
-            </div>
+      <div className={`absolute inset-0 tech-grid z-0 ${isEditMode ? 'editor-mode-bg' : ''}`} />
+      <div className="absolute inset-0 chart-overlay z-20 opacity-40" />
 
-            <div>
-              <p className="font-bold text-white uppercase text-xs tracking-widest border-b border-[#333] pb-1 mb-2 mt-4">Níveis de Carga (1 a 10)</p>
-              <ul className="space-y-2 mt-2">
-                <li className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-blue-500"></span> <b>1 a 3 (Baixa):</b> Giro leve, recuperação.</li>
-                <li className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-green-500"></span> <b>4 a 5 (Média):</b> Resistência base, confortável.</li>
-                <li className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-orange-500"></span> <b>6 a 7 (Média+):</b> Esforço moderado/pesado, subida leve.</li>
-                <li className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-red-500"></span> <b>8 a 10 (Alta/Máx):</b> Subida pesada, tiro de força (sprint).</li>
-              </ul>
-            </div>
-          </div>
-          
-          <button 
-            onClick={() => setShowHelp(false)}
-            className="mt-6 bg-[#222] hover:bg-[#333] text-white p-3 rounded-xl font-bold uppercase text-xs transition-colors"
-          >
-            Entendi
-          </button>
-        </div>
-      )}
-
-      {/* HEADER FIXO: shrink-0 impede que seja esmagado pela rolagem */}
-      <header className="flex flex-col gap-2 shrink-0 p-4 md:p-5 pb-2 border-b border-[#1a1a1a]">
-        <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2 text-gray-500 uppercase text-[10px] font-bold tracking-widest ml-1">
-                <LayoutList size={14} className={workoutToEdit ? "text-blue-500" : "text-green-500"} /> 
-                {workoutToEdit ? 'Editando Treino' : 'Novo Cadastro'}
-            </div>
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={() => setShowHelp(true)} 
-                className="text-gray-500 hover:text-orange-500 transition-colors flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest"
-                title="Como preencher"
-              >
-                <HelpCircle size={14} /> Ajuda
-              </button>
-
-              {workoutToEdit && (
-                  <button onClick={onCancel} className="text-gray-500 hover:text-white transition-colors flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest">
-                      <X size={12} /> Cancelar
-                  </button>
-              )}
-            </div>
-        </div>
-        <input 
-          className={`w-full bg-black border rounded-xl p-3 text-white placeholder:text-gray-600 outline-none transition-all font-bold text-base md:text-lg uppercase mt-1 ${workoutToEdit ? 'border-blue-500/50 focus:border-blue-500' : 'border-[#333] focus:border-green-500'}`}
-          placeholder="NOME DO TREINO"
-          value={nome}
-          onChange={(e) => setNome(e.target.value.toUpperCase())}
-        />
-      </header>
-      
-      {/* ZONA DE SCROLL: flex-1 preenche o meio, min-h-0 destrava o limite vertical */}
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-3 p-4 md:p-5 scrollbar-thin scrollbar-thumb-[#333] scrollbar-track-transparent">
-        {timeline.map((b, i) => {
-          const carga = getCargaDetails(b.intensidade); 
-
-          return (
-          <div key={i} className="group bg-[#1a1a1a] border border-[#2a2a2a] p-3 md:p-4 rounded-xl transition-all hover:border-gray-500 flex flex-col gap-3">
-            <div className="flex justify-between items-start">
-              <div className="flex items-center gap-2 bg-black px-2 py-1 rounded text-[10px] font-mono text-gray-400 border border-[#222]">
-                 <Clock size={10} /> 
-                 {formatTime(b.tempo_inicial)} <span className="text-gray-600">→</span> {formatTime(b.tempo_final)}
-              </div>
-              <button onClick={() => removeBloco(i)} className="opacity-100 md:opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-red-500 transition-all">
-                <Trash2 size={16} />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_80px_80px] gap-3 items-end">
-              
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase ml-1 flex items-center gap-1">
-                  <Dumbbell size={10} /> Movimento
-                </label>
-                <input 
-                  type="text" 
-                  className="w-full bg-black text-white rounded-lg p-2.5 text-sm font-bold outline-none border border-[#333] focus:border-green-500 placeholder:text-gray-700 uppercase"
-                  placeholder="EX: GIRO"
-                  value={b.exercicio}
-                  onChange={e => updateBloco(i, 'exercicio', e.target.value)}
-                />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase ml-1 flex items-center gap-1" title="Rotações por Minuto">
-                  <Activity size={10} /> RPM
-                </label>
-                <input 
-                  type="number" 
-                  className="w-full bg-black text-white rounded-lg p-2.5 text-center font-mono font-bold outline-none border border-[#333] focus:border-blue-500 transition-colors"
-                  value={b.rpm} 
-                  onChange={e => updateBloco(i, 'rpm', e.target.value)} 
-                />
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase ml-1 flex items-center gap-1" title="Duração do bloco">
-                  <Timer size={10} /> Segs
-                </label>
-                <input 
-                  type="number" 
-                  className="w-full bg-black text-white rounded-lg p-2.5 text-center font-mono font-bold outline-none border border-[#333] focus:border-green-500"
-                  value={b.duracao} 
-                  onChange={e => updateBloco(i, 'duracao', e.target.value)} 
-                />
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1 mt-1">
-              <div className="flex justify-between items-end mb-2">
-                <label className="text-[10px] font-bold text-gray-500 uppercase ml-1">Carga</label>
-                <div className="flex items-center gap-2">
-                  <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border ${carga.bg} ${carga.text}`}>
-                    {carga.label}
-                  </span>
-                  <span className={`font-black text-lg md:text-xl italic leading-none ${carga.text}`}>
-                    {b.intensidade}
-                  </span>
-                </div>
-              </div>
-              <input 
-                type="range" min="1" max="10" 
-                className={`w-full h-1.5 bg-black rounded-lg appearance-none cursor-pointer border border-[#333] ${workoutToEdit ? 'accent-blue-500' : 'accent-orange-500'}`} 
-                value={b.intensidade}
-                onChange={e => updateBloco(i, 'intensidade', Number(e.target.value))}
-              />
-            </div>
-          </div>
-        )})}
+      <div className="absolute right-0 top-0 bottom-0 w-3 md:w-5 bg-[#050505] border-l border-black z-10 flex flex-col items-center py-1">
+        <div className={`flex-1 w-full rounded-full mx-0.5 opacity-90 transition-all duration-500 ${isEditMode ? 'bg-blue-600/30' : 'bg-gradient-to-t from-[#0052cc] via-[#22c55e] via-[#eab308] via-[#f97316] to-[#ef4444] shadow-[0_0_10px_rgba(255,255,255,0.1)]'}`} />
       </div>
 
-      {/* FOOTER FIXO: shrink-0 mantém os botões no final sem sobrepor a lista */}
-      <footer className="flex flex-col gap-3 shrink-0 p-4 md:p-5 border-t border-[#1a1a1a] bg-[#0a0a0a]">
-        <div className="flex justify-between items-end px-2">
-          <div className="flex flex-col">
-            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Duração Total</span>
-            <span className={`text-xl md:text-2xl font-mono font-black ${workoutToEdit ? 'text-blue-500' : 'text-green-500'}`}>{formatTime(totalDuration)}</span>
+      {/* GRÁFICO RECHARTS */}
+      <div className="absolute inset-0 pr-6 md:pr-8 pl-1 pb-4 pt-2 z-10 pointer-events-none">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 20, right: 5, left: 5, bottom: 0 }}>
+            <defs>
+              <linearGradient id="mountainside" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={isEditMode ? "#3b82f6" : "#ffffff"} stopOpacity={isEditMode ? 0.2 : 0.12}/>
+                <stop offset="95%" stopColor={isEditMode ? "#3b82f6" : "#ffffff"} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            
+            <XAxis dataKey="tempo" type="number" domain={[0, localDuration]} hide padding={{ left: 5, right: 5 }} />
+            <YAxis domain={[0, 10]} hide />
+
+            {[2, 4, 6, 8].map(zone => (
+              <ReferenceLine key={zone} y={zone} stroke={isEditMode ? "#3b82f6" : "#ffffff"} strokeDasharray="4 4" strokeOpacity={isEditMode ? 0.15 : 0.05} />
+            ))}
+
+            {/* O type linear cria as arestas retas porque injetamos pontos de inicio e fim no chartData */}
+            <Area type="linear" dataKey="intensidade" fill="url(#mountainside)" stroke="none" isAnimationActive={false} />
+
+            <Line
+              type="linear" dataKey="intensidade" stroke={isEditMode ? "#3b82f6" : "#ffffff"} strokeWidth={3}
+              dot={false} activeDot={false} isAnimationActive={false}
+              style={{ filter: `drop-shadow(0px 0px 6px ${isEditMode ? 'rgba(59,130,246,0.6)' : 'rgba(255,255,255,0.4)'})` }}
+            />
+
+            {!isEditMode && (
+              <>
+                <ReferenceLine 
+                  x={currentTime} stroke={telemetry.color} strokeWidth={isDragging ? 3 : 2}
+                  strokeOpacity={0.6} className="telemetry-sync"
+                  style={{ filter: `drop-shadow(0px 0px 8px ${telemetry.glow})` }}
+                />
+                <ReferenceDot 
+                  x={currentTime} y={telemetry.y} r={isDragging ? 12 : 7} 
+                  fill={telemetry.color} stroke="#ffffff" strokeWidth={isDragging ? 3 : 2}
+                  isFront={true} className="telemetry-sync"
+                  style={{ filter: `drop-shadow(0px 0px ${isDragging ? '20px' : '14px'} ${telemetry.glow})` }}
+                />
+              </>
+            )}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* CAMADA INVISÍVEL 1: Scrubber de Tempo Normal */}
+      {!isEditMode && localDuration > 0 && (
+        <input 
+          type="range" min={0} max={localDuration} step="0.1" value={currentTime}
+          onMouseDown={onSeekStart} onTouchStart={onSeekStart}
+          onChange={(e) => onSeek(Number(e.target.value))}
+          onMouseUp={onSeekEnd} onTouchEnd={onSeekEnd}
+          className="absolute top-0 bottom-0 left-1 right-6 md:right-8 w-[calc(100%-28px)] md:w-[calc(100%-36px)] h-full opacity-0 z-50 m-0"
+          style={{ paddingLeft: '5px', paddingRight: '5px', touchAction: 'none', cursor: isDragging ? 'grabbing' : 'grab' }}
+        />
+      )}
+
+      {/* CAMADA INVISÍVEL 2: UI DO EDITOR VISUAL */}
+      {isEditMode && localDuration > 0 && (
+        <div ref={overlayRef} className="absolute top-0 bottom-0 left-1 right-6 md:right-8 w-[calc(100%-28px)] md:w-[calc(100%-36px)] z-50 pointer-events-none" style={{ paddingLeft: '5px', paddingRight: '5px' }}>
+          <div className="relative w-full h-full">
+            
+            {/* ALÇAS INTERMEDIÁRIAS (Empurram a timeline toda) */}
+            {localBlocos.slice(0, -1).map((bloco, idx) => {
+              const leftPercent = (bloco.tempo_final / localDuration) * 100;
+              return (
+                <div 
+                  key={idx}
+                  className="absolute top-0 bottom-0 flex flex-col items-center justify-center cursor-ew-resize group pointer-events-auto"
+                  style={{ left: `${leftPercent}%`, width: '30px', transform: 'translateX(-50%)', touchAction: 'none' }}
+                  onPointerDown={(e) => { e.preventDefault(); setDragBoundary(idx); }}
+                >
+                  <div className={`w-[2px] h-full transition-colors ${dragBoundary === idx ? 'bg-blue-400 shadow-[0_0_10px_rgba(59,130,246,0.8)]' : 'bg-blue-500/30 group-hover:bg-blue-400/80'}`} />
+                  <div className={`absolute w-5 h-5 rounded-full border-2 transition-all flex items-center justify-center ${dragBoundary === idx ? 'bg-blue-500 border-white scale-125 shadow-[0_0_15px_rgba(59,130,246,0.8)]' : 'bg-[#0f0f0f] border-blue-500 group-hover:scale-110 shadow-lg'}`}>
+                     <div className="w-1 h-2.5 flex justify-between">
+                        <div className="w-[1px] bg-blue-300/50 h-full"></div>
+                        <div className="w-[1px] bg-blue-300/50 h-full"></div>
+                     </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* ALÇA FINAL EXCLUSIVA (Puxa e Encolhe o tempo total macro do treino) */}
+            {localBlocos.length > 0 && (
+              <div 
+                  className="absolute top-0 bottom-0 flex flex-col items-center justify-center cursor-ew-resize group pointer-events-auto"
+                  style={{ left: `100%`, width: '30px', transform: 'translateX(-50%)', touchAction: 'none' }}
+                  onPointerDown={(e) => { e.preventDefault(); setDragBoundary('END'); }}
+              >
+                 <div className={`w-[4px] h-full transition-colors ${dragBoundary === 'END' ? 'bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.8)]' : 'bg-red-600/50 group-hover:bg-red-500/80'}`} />
+                 <div className={`absolute w-6 h-6 rounded-md border-2 transition-all flex items-center justify-center ${dragBoundary === 'END' ? 'bg-red-600 border-white scale-110 shadow-[0_0_15px_rgba(239,68,68,0.8)]' : 'bg-[#0f0f0f] border-red-500 group-hover:scale-105 shadow-lg'}`}>
+                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="text-red-400">
+                        <path d="M9 18l6-6-6-6" />
+                     </svg>
+                 </div>
+              </div>
+            )}
+
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <button 
-            onClick={addBloco} 
-            className="flex items-center justify-center gap-2 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-white p-3 md:p-4 rounded-xl font-bold transition-all text-xs uppercase"
-          >
-            <Plus size={16} /> Nova Fase
-          </button>
-          <button 
-            onClick={handleSave} 
-            className={`flex items-center justify-center gap-2 text-white p-3 md:p-4 rounded-xl font-black transition-all text-xs uppercase shadow-lg active:scale-95 ${workoutToEdit ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20' : 'bg-green-600 hover:bg-green-500 shadow-green-900/20'}`}
-          >
-            <Save size={16} /> {workoutToEdit ? 'Salvar Alterações' : 'Salvar Treino'}
-          </button>
+      )}
+
+      {/* HUD INFERIOR */}
+      <div className="absolute bottom-1 left-4 right-12 flex justify-between items-end z-30 pointer-events-none">
+        <div className="flex flex-col gap-1.5 mb-1">
+          <span className="text-[9px] font-black text-white/20 uppercase tracking-[0.3em] drop-shadow-md">Tracker OS v2</span>
         </div>
-      </footer>
+
+        <div className="flex items-center gap-2 bg-[#050505]/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/5 shadow-lg mb-1">
+          <span 
+            className="text-[9px] font-black uppercase tracking-[0.2em] transition-colors duration-300" 
+            style={{ color: isEditMode ? (dragBoundary === 'END' ? '#ef4444' : '#3b82f6') : isDragging ? '#ef4444' : telemetry.color }}
+          >
+            {isEditMode ? (dragBoundary === 'END' ? 'MACRO STRETCH ATIVO' : 'MODO DE EDIÇÃO ATIVO') : isDragging ? '⚠ MANUAL OVERRIDE' : 'Sync Lossless'}
+          </span>
+          <span 
+             className="text-[10px]"
+             style={{ 
+               color: isEditMode ? (dragBoundary === 'END' ? '#ef4444' : '#3b82f6') : isDragging ? '#ef4444' : telemetry.color, 
+               animation: isEditMode || isDragging ? 'none' : `pulse ${pulseDuration}s cubic-bezier(0.4, 0, 0.6, 1) infinite`,
+               opacity: isEditMode || isDragging ? 1 : 0.8,
+               textShadow: `0 0 8px ${isEditMode ? (dragBoundary === 'END' ? 'rgba(239,68,68,0.8)' : 'rgba(59,130,246,0.8)') : isDragging ? 'rgba(239, 68, 68, 0.8)' : telemetry.glow}`
+             }}>
+             ●
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
