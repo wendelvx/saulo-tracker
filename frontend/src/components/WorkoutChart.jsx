@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ComposedChart, Line, XAxis, YAxis, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 
+// --- MARGEM DE SEGURANÇA PARA AS ARESTAS ---
+const CHART_MARGIN_X = 24; 
+
 // --- FUNÇÕES UTILITÁRIAS DE COR ---
 const hexToRgb = (hex) => {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -18,7 +21,6 @@ const interpolateColor = (color1, color2, factor) => {
 
 const getSmoothColor = (y) => {
   const val = Math.max(0, Math.min(y, 10));
-  // Limites exatos do gradiente: 30% (Verde), 60% (Amarelo/Laranja), 80% (Vermelho)
   if (val <= 3.0) return interpolateColor('#0052cc', '#22c55e', val / 3.0); 
   if (val <= 6.0) return interpolateColor('#22c55e', '#eab308', (val - 3.0) / 3.0); 
   if (val <= 8.0) return interpolateColor('#eab308', '#ef4444', (val - 6.0) / 2.0); 
@@ -41,10 +43,8 @@ const IntensityBar = ({ intensity }) => {
     <div className="absolute right-0 top-6 bottom-6 w-2 md:w-3 bg-[#050505] border-l border-black z-10 flex flex-col items-center py-2">
       <div 
         className="flex-1 w-full rounded-full mx-0.5 opacity-90 transition-all duration-500 shadow-[0_0_10px_rgba(255,255,255,0.05)] relative"
-        // O gradiente CSS espelha a exata matemática do getSmoothColor
         style={{ background: 'linear-gradient(to top, #0052cc 0%, #22c55e 30%, #eab308 60%, #ef4444 80%, #b91c1c 100%)' }}
       >
-        {/* Marcador dinâmico de intensidade */}
         <div 
           className="absolute left-[-2px] right-[-2px] h-1.5 rounded-full border border-white shadow-[0_0_8px_rgba(255,255,255,0.9)] transition-all duration-75"
           style={{ bottom: `calc(${percentage}% - 3px)`, backgroundColor: `rgb(${c})` }}
@@ -221,7 +221,6 @@ export default function WorkoutChart({
     return points;
   }, [localBlocos]);
 
-  // A MÁGICA: Interpolação para a bolinha acompanhar exatamente a inclinação da rampa
   const telemetry = useMemo(() => {
     if (chartData.length < 2 || currentTime <= 0) {
         const c = getSmoothColor(0);
@@ -233,7 +232,6 @@ export default function WorkoutChart({
       return { y: lastInt, color: `rgb(${c})`, glow: `rgba(${c}, 0.8)` };
     }
 
-    // Procura o segmento onde o currentTime está
     for (let i = 0; i < chartData.length - 1; i++) {
       const ponto1 = chartData[i];
       const ponto2 = chartData[i + 1];
@@ -243,7 +241,6 @@ export default function WorkoutChart({
         const tempoPercorrido = currentTime - ponto1.tempo;
         const fatorInterpolacao = duracaoSegmento === 0 ? 0 : tempoPercorrido / duracaoSegmento;
 
-        // Calcula a altura (y) exata na rampa
         const yInterpolado = ponto1.intensidade + fatorInterpolacao * (ponto2.intensidade - ponto1.intensidade);
         const rgbColor = getSmoothColor(yInterpolado);
         
@@ -281,7 +278,7 @@ export default function WorkoutChart({
          {/* GRÁFICO DE TELEMETRIA RECHARTS */}
          <div className="absolute inset-0 z-10 px-4 pr-10 md:px-8 md:pr-14">
            <ResponsiveContainer width="100%" height="100%">
-             <ComposedChart data={chartData} margin={{ top: 60, right: 0, left: 0, bottom: 60 }}>
+             <ComposedChart data={chartData} margin={{ top: 60, right: CHART_MARGIN_X, left: CHART_MARGIN_X, bottom: 60 }}>
                <XAxis dataKey="tempo" type="number" domain={[0, localDuration]} hide padding={{ left: 0, right: 0 }} />
                <YAxis domain={[0, 10]} hide />
 
@@ -315,18 +312,23 @@ export default function WorkoutChart({
            </ResponsiveContainer>
          </div>
          
+         {/* SLIDER ALINHADO COM A MARGEM GEOMÉTRICA */}
          {!isEditMode && localDuration > 0 && (
-          <input 
-            type="range" min={0} max={localDuration} step="0.1" value={currentTime}
-            onMouseDown={onSeekStart} onTouchStart={onSeekStart} onChange={(e) => onSeek(Number(e.target.value))} onMouseUp={onSeekEnd} onTouchEnd={onSeekEnd}
-            className="absolute top-0 bottom-0 left-0 right-10 w-full h-full opacity-0 z-50 cursor-pointer"
-          />
+          <div className="absolute inset-0 z-50 pointer-events-none px-4 pr-10 md:px-8 md:pr-14">
+            <div className="relative h-full" style={{ margin: `0 ${CHART_MARGIN_X}px`, width: `calc(100% - ${CHART_MARGIN_X * 2}px)` }}>
+               <input 
+                 type="range" min={0} max={localDuration} step="0.1" value={currentTime}
+                 onMouseDown={onSeekStart} onTouchStart={onSeekStart} onChange={(e) => onSeek(Number(e.target.value))} onMouseUp={onSeekEnd} onTouchEnd={onSeekEnd}
+                 className="absolute inset-0 w-full h-full opacity-0 pointer-events-auto z-50 cursor-pointer"
+               />
+            </div>
+          </div>
          )}
 
          {/* ZONAS DE ARRASTO INVISÍVEIS ALINHADAS MATEMATICAMENTE */}
          {isEditMode && localDuration > 0 && (
           <div className="absolute inset-0 z-50 pointer-events-none px-4 pr-10 md:px-8 md:pr-14">
-             <div ref={overlayRef} className="relative w-full h-full" style={{ top: '60px', height: 'calc(100% - 120px)' }}>
+             <div ref={overlayRef} className="relative" style={{ top: '60px', height: 'calc(100% - 120px)', margin: `0 ${CHART_MARGIN_X}px`, width: `calc(100% - ${CHART_MARGIN_X * 2}px)` }}>
                
                {localBlocos.slice(0, -1).map((bloco, idx) => {
                   const leftPercent = localDuration > 0 ? (bloco.tempo_final / localDuration) * 100 : 0;

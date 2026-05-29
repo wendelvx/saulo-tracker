@@ -38,7 +38,6 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [isVisualEditMode, setIsVisualEditMode] = useState(false); 
   
-  // NOVO: Estado para espelhar o tempo no cabeçalho em tempo real durante o arraste
   const [previewDuration, setPreviewDuration] = useState(null);
   
   const wasRunningRef = useRef(false);
@@ -76,7 +75,7 @@ export default function App() {
         await axios.put(`${API}/treinos/${workoutData.id}`, workoutData);
         setWorkoutToEdit(null);
         setIsVisualEditMode(false);
-        setPreviewDuration(null); // Limpa o preview ao salvar
+        setPreviewDuration(null); 
       } else {
         await axios.post(`${API}/treinos`, workoutData);
       }
@@ -195,7 +194,7 @@ export default function App() {
     setIsRunning(false);
     setIsCountingDown(false);
     setCurrentTime(0);
-    setPreviewDuration(null); // Limpa o preview no reset
+    setPreviewDuration(null); 
     lastAccumulatedRef.current = 0;
     startTimeRef.current = null;
   };
@@ -333,7 +332,7 @@ export default function App() {
                           <button 
                             onClick={() => {
                               setIsVisualEditMode(false);
-                              setPreviewDuration(null); // Limpa ao sair do modo de edição
+                              setPreviewDuration(null); 
                             }}
                             className={`px-3 py-1.5 text-[9px] font-black uppercase tracking-widest rounded-md transition-all ${!isVisualEditMode ? 'bg-orange-600 text-white shadow-md' : 'text-gray-500 hover:text-white'}`}
                           >
@@ -360,7 +359,6 @@ export default function App() {
                             {formatTime(currentTime)}
                           </span>
                           <span className="text-gray-700 mx-1">/</span>
-                          {/* MOSTRA O TEMPO DE PREVIEW EM VERMELHO ENQUANTO ARRASTA, OU O TEMPO OFICIAL */}
                           <span className={previewDuration !== null ? "text-red-500 transition-colors" : ""}>
                             {formatTime(previewDuration !== null ? previewDuration : activeWorkout.duracao_total)}
                           </span>
@@ -383,11 +381,13 @@ export default function App() {
                       {formatTime((stats?.current?.tempo_final || 0) - currentTime)}
                     </div>
 
+                    {/* SOLUÇÃO DE TIPOGRAFIA FLUIDA (Sem truncate) */}
                     <div
-                      className="py-4 px-2 sm:px-4 flex items-center justify-center border-r-[4px] border-[#1a1a1a] bg-[#ea580c] uppercase text-white italic leading-tight"
-                      style={obsMode ? { fontSize: 'clamp(1.5rem, 4vw, 5.5rem)' } : { fontSize: 'clamp(1.2rem, 2.5vw, 2.2rem)' }}
+                      className="py-4 px-2 sm:px-4 flex items-center justify-center border-r-[4px] border-[#1a1a1a] bg-[#ea580c] uppercase text-white italic min-w-0"
+                      // A matemática do clamp foi reduzida ligeiramente para caber textos longos.
+                      style={obsMode ? { fontSize: 'clamp(1.2rem, 3vw, 5.5rem)' } : { fontSize: 'clamp(0.8rem, 1.8vw, 2.2rem)' }}
                     >
-                      <span className="drop-shadow-md break-words whitespace-normal w-full" style={{ wordBreak: 'break-word' }}>
+                      <span className="drop-shadow-md w-full px-1 md:px-2 whitespace-normal break-words text-center leading-[1.1]">
                         {stats?.current?.exercicio || 'RECUPERA'}
                       </span>
                     </div>
@@ -451,11 +451,12 @@ export default function App() {
                     >
                       {stats?.next ? formatTime(stats.next.tempo_final - stats.next.tempo_inicial) : '00:00'}
                     </div>
+                    {/* SOLUÇÃO DE TIPOGRAFIA FLUIDA (Sem truncate) */}
                     <div
-                      className="py-2 sm:py-3 px-2 flex items-center justify-center border-r-[4px] border-[#1a1a1a] uppercase text-gray-400 bg-[#0d0d0d] leading-tight"
-                      style={obsMode ? { fontSize: 'clamp(1rem, 1.5vw, 2rem)' } : { fontSize: 'clamp(0.9rem, 1.2vw, 1.2rem)' }}
+                      className="py-2 sm:py-3 px-2 flex items-center justify-center border-r-[4px] border-[#1a1a1a] uppercase text-gray-400 bg-[#0d0d0d] min-w-0"
+                      style={obsMode ? { fontSize: 'clamp(0.9rem, 1.2vw, 2rem)' } : { fontSize: 'clamp(0.65rem, 1vw, 1.2rem)' }}
                     >
-                      <span className="break-words whitespace-normal w-full" style={{ wordBreak: 'break-word' }}>
+                      <span className="w-full px-1 md:px-2 whitespace-normal break-words text-center leading-[1.1]">
                         {stats?.next ? stats.next.exercicio : 'FIM'}
                       </span>
                     </div>
@@ -491,7 +492,7 @@ export default function App() {
                     isDragging={isDragging}
                     isEditMode={isVisualEditMode}
                     onBlocksUpdate={handleChartBlocksUpdate}
-                    onDurationPreview={setPreviewDuration} // NOVO: Passa a função de preview para o gráfico
+                    onDurationPreview={setPreviewDuration} 
                   />
                 </div>
               </div>
